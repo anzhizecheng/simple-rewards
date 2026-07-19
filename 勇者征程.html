@@ -4272,6 +4272,12 @@ function applySaveData(data) {
     delete _cache.player.armor;
     delete _cache.player.accessory;
   }
+  // 自动卸下特殊物品（宝箱钥匙等不应装备的物品）
+  if (_cache.player && _cache.player.equipped && _cache.player.equipped.accessories) {
+    _cache.player.equipped.accessories = _cache.player.equipped.accessories.filter(function(id){
+      return KEY_IDS.indexOf(Number(id)) < 0;
+    });
+  }
   _cache.checkinDate = data.checkinDate || "";
   _cache.growthLog = data.growthLog || [];
   // 兼容旧版 dailyOpp 格式（旧版是直接的 NPC 对象）
@@ -6090,14 +6096,18 @@ function isEquipped(player, itemId) {
 // 知识典籍ID范围（全局定义）
 var TOME_IDS = [301,302,303,304,305,306,307,308,309,310,311,312,313,314,315];
 function isTome(eq) { return TOME_IDS.indexOf(eq.id) >= 0; }
+// 特殊物品ID（不装备、不占槽位，仅作为收集品或背包被动物品）
+var KEY_IDS = [98];  // 宝箱钥匙：只占背包，不占饰品槽
+function isSpecialItem(eq) { return TOME_IDS.indexOf(eq.id) >= 0 || KEY_IDS.indexOf(eq.id) >= 0; }
 
 function canEquipItem(player, item) {
   if (player.level < item.lvl) return false;
   if (!player.inventory[item.id] || player.inventory[item.id] <= 0) return false;
   if (isEquipped(player, item.id)) return false;
   // 知识典籍不能装备（只收集点亮，不占装备槽）
-  if (TOME_IDS.indexOf(Number(item.id)) >= 0) return false;
-  
+  // 宝箱钥匙不能装备（被动物品，只占背包不占饰品槽）
+  if (isSpecialItem(item)) return false;
+
   if (item.type === "weapon") {
     return player.equipped.weapons.length < getMaxWeapons();
   }
@@ -6670,7 +6680,7 @@ function renderEquipInline(player) {
       var id = Number(idStr);
       var eq = EQUIP_DB.find(function(e){ return e.id == id; });
       if (!eq) continue;
-      if (eq.type === "consumable" || TOME_IDS.indexOf(id) >= 0) continue;
+      if (eq.type === "consumable" || TOME_IDS.indexOf(id) >= 0 || KEY_IDS.indexOf(id) >= 0) continue;
       if (filterType === "armor" && eq.type !== "armor") continue;
       if (filterType === "weapon" && eq.type !== "weapon") continue;
       if (filterType === "accessory" && eq.type !== "accessory") continue;
@@ -7181,16 +7191,16 @@ function doChallenge() {
   if (!npcId) { showToast("请先选择一位对手！"); return; }
   var npc = NPC_DB.find(function(n){return n.id==npcId;});
   if (!npc) return;
-  
+
   // 检查每日次数（超次数也可以打，但没有奖励）
   var remaining = getActiveChallengeRemaining();
   var hasReward = remaining > 0;
-  
+
   var player = getPlayer();
-  
-  // 战斗中消耗消耗品（仅在有奖励时消耗）
+
+  // 战斗中消耗消耗品（有奖励次数才消耗）
   var usedItem = hasReward ? consumeForBattle(player) : null;
-  
+
   // 回合制战斗
   var battle = runBattle(player, npc, usedItem);
   var result = battle.winner === "player" ? "win" : (battle.winner === "npc" ? "lose" : "draw");
@@ -7233,21 +7243,21 @@ function doChallenge() {
     xpGain: xpGain,
     hasReward: hasReward
   };
-  
+
   // 保存（消耗品已扣）
   savePlayer(player);
-  
-  // 消耗一次主动挑战次数（仅在有奖励时消耗次数）
+
+  // 消耗一次主动挑战次数（有奖励次数才消耗，不论胜负）
   if (hasReward) {
     useActiveChallenge();
   }
-  
+
   var gainText = resultText;
   if (usedItem && usedItem.length > 0) gainText += " · 用掉" + usedItem.length + "件消耗品";
   if (drops.length > 0) gainText += " · 掉落" + drops.length + "件";
   if (xpGain > 0) gainText += " · 经验+" + xpGain;
   if (!hasReward) gainText += "（练习模式，无奖励）";
-  
+
   addGrowthLog({
     date: todayStr(), icon:npc.icon, desc:"主动挑战 " + npc.name + "（" + npc.world + "）" + (hasReward?"":"[练习]"),
     gains: gainText
@@ -7299,9 +7309,9 @@ function renderEquipPanel() {
   var bpWorld = _cache.bpFilter.world;
   var bpLvl = _cache.bpFilter.lvl;
 
-  // 我的背包（已拥有的装备，排除典籍）
+  // 我的背包（已拥有的装备，排除典籍和特殊物品）
   var ownedItems = EQUIP_DB.filter(function(eq){
-    return (player.inventory[eq.id] || 0) > 0 && !isTome(eq);
+    return (player.inventory[eq.id] || 0) > 0 && !isSpecialItem(eq);
   });
   if (bpRarity !== "all") ownedItems = ownedItems.filter(function(e){return e.rarity===bpRarity;});
   if (bpWorld !== "all") ownedItems = ownedItems.filter(function(e){return e.world===bpWorld;});
@@ -7314,8 +7324,13 @@ function renderEquipPanel() {
   });
   ownedTomes.sort(function(a,b){ return a.world.localeCompare(b.world); });
 
-  // 装备图鉴（所有装备，排除典籍）—— 不受背包筛选影响
-  var allItems = EQUIP_DB.filter(function(eq){ return !isTome(eq); });
+  // 已拥有的特殊物品（宝箱钥匙等）
+  var ownedKeys = EQUIP_DB.filter(function(eq){
+    return (player.inventory[eq.id] || 0) > 0 && KEY_IDS.indexOf(eq.id) >= 0;
+  });
+
+  // 装备图鉴（所有装备，排除典籍和特殊物品）—— 不受背包筛选影响
+  var allItems = EQUIP_DB.filter(function(eq){ return !isSpecialItem(eq); });
 
   var html = "";
 
@@ -7325,7 +7340,7 @@ function renderEquipPanel() {
   var wCount = player.equipped.weapons.length;
   var aCount = 0;
   for (var s in player.equipped.armor) { if (player.equipped.armor[s]) aCount++; }
-  var accCount = player.equipped.accessories.filter(function(id){ return TOME_IDS.indexOf(Number(id)) < 0; }).length;
+  var accCount = player.equipped.accessories.filter(function(id){ return TOME_IDS.indexOf(Number(id)) < 0 && KEY_IDS.indexOf(Number(id)) < 0; }).length;
   var maxAcc = getMaxAccessories(player.level);
   html += '<h3 class="section-title">🎒 我的背包（' + ownedItems.length + '件）</h3>';
   html += '<div class="equip-slots-bar">';
@@ -7447,6 +7462,28 @@ function renderEquipPanel() {
     html += '</div>';
   }
   html += '</div>';
+
+  // ===== 特殊物品（宝箱钥匙等，不占装备槽）=====
+  if (ownedKeys.length > 0) {
+    html += '<div class="tome-section">';
+    html += '<h3 class="section-title">🗝️ 特殊物品（' + ownedKeys.length + '件）</h3>';
+    html += '<div class="tome-grid">';
+    ownedKeys.forEach(function(key) {
+      var owned = player.inventory[key.id] || 0;
+      html += '<div class="tome-card">';
+      html += '<div class="tome-header">';
+      html += '<div class="tome-icon">'+key.icon+'</div>';
+      html += '<div>';
+      html += '<div class="tome-name">'+key.name+(owned > 1 ? ' ×'+owned : '')+'</div>';
+      html += '<div class="tome-world">' + rarityName(key.rarity) + ' · Lv.'+key.lvl+'</div>';
+      html += '</div></div>';
+      html += '<div class="tome-effect">✨ '+key.effect+'</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    html += '<div style="text-align:right;font-size:18px;color:var(--muted);padding:4px 0;">💡 这类物品自动生效，不占装备槽位，无需装备</div>';
+    html += '</div>';
+  }
 
   // ===== 装备图鉴（下方）=====
   // 图鉴筛选计算（放在前面，标题要用）
