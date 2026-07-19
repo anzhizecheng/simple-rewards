@@ -2,7 +2,7 @@
 
 > 孩子学习的即时激励工具 —— 完成学习汇报和每日打卡，即可获得丰厚奖励。用抽奖代替游戏的方式，让每一次学习都有成长感。
 
-![[./simple-rewards截图.jpg]]
+![Simple Rewards 截图](./simple-rewards截图.jpg)
 
 ## 📖 项目简介
 
